@@ -81,7 +81,7 @@ const generateMockCoins = (): Coin[] => {
     roi: null,
     last_updated: new Date().toISOString(),
     sparkline_in_7d: {
-      price: Array.from({ length: 50 }, (_, i) => 
+      price: Array.from({ length: 48 }, (_, i) => 
         c.price * (1 + Math.sin(i / 5 + index) * 0.05 + (Math.random() * 0.02 - 0.01))
       )
     }
@@ -160,14 +160,15 @@ export const fetchCoins = async (forceRefresh = false): Promise<Coin[]> => {
 
     // SANITIZATION: Ensure sparkline data exists even if API returns null for it
     const data = rawData.map((coin: any, index: number) => {
+        // Fallback generator if API returns null for sparkline (common in free tier)
         if (!coin.sparkline_in_7d || !coin.sparkline_in_7d.price || coin.sparkline_in_7d.price.length === 0) {
-            // Generate synthetic chart data based on current price if missing
+            const mockPoints = Array.from({ length: 48 }, (_, i) => 
+                coin.current_price * (1 + Math.sin(i / 4) * 0.02 + (Math.random() * 0.04 - 0.02))
+            );
             return {
                 ...coin,
                 sparkline_in_7d: {
-                    price: Array.from({ length: 48 }, (_, i) => 
-                        coin.current_price * (1 + Math.sin(i / 4) * 0.02 + (Math.random() * 0.04 - 0.02))
-                    )
+                    price: mockPoints
                 }
             };
         }
