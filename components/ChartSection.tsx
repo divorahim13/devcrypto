@@ -12,14 +12,14 @@ const ChartSection: React.FC<ChartSectionProps> = ({ coin }) => {
 
   // Optimization: Memoize data generation based on timeframe
   const { data, minPrice, maxPrice } = useMemo(() => {
-    const rawPrices = coin.sparkline_in_7d?.price || [];
+    // Robust fallback: if sparkline is missing, create a single point to prevent crash
+    const rawPrices = coin.sparkline_in_7d?.price || [coin.current_price]; 
     const currentPrice = coin.current_price;
     const now = Date.now();
     
     let generatedData: { time: number; price: number }[] = [];
 
     // Helper for generating synthetic data that connects to current price
-    // We walk backwards from current price to ensure continuity with the "Live" price displayed
     const generateSynthetic = (points: number, durationMs: number, volatility: number) => {
         const arr = [];
         let price = currentPrice;
@@ -41,13 +41,9 @@ const ChartSection: React.FC<ChartSectionProps> = ({ coin }) => {
     };
 
     if (timeframe === '1H') {
-        // 1 Hour: Synthetic 60 points (1 min interval)
-        // High frequency, low volatility
         generatedData = generateSynthetic(60, 3600 * 1000, 0.0008);
     } 
     else if (timeframe === '24H') {
-        // 24 Hours: Slice last 24 points from real data if available
-        // Real data from CoinGecko sparkline is usually hourly for 7 days
         if (rawPrices.length >= 24) {
             const sliced = rawPrices.slice(-24);
             generatedData = sliced.map((p, i) => ({
@@ -59,7 +55,6 @@ const ChartSection: React.FC<ChartSectionProps> = ({ coin }) => {
         }
     } 
     else if (timeframe === '7D') {
-        // 7 Days: Use full real data
         if (rawPrices.length > 0) {
             generatedData = rawPrices.map((p, i) => ({
                 time: now - (rawPrices.length - 1 - i) * 3600 * 1000,
@@ -70,14 +65,18 @@ const ChartSection: React.FC<ChartSectionProps> = ({ coin }) => {
         }
     } 
     else if (timeframe === '30D') {
-        // 30 Days: Synthetic (Daily points)
-        // Higher volatility for longer timeframe
         generatedData = generateSynthetic(30, 30 * 24 * 3600 * 1000, 0.015);
     } 
     else if (timeframe === '1Y') {
-        // 1 Year: Synthetic (Weekly points)
-        // Highest volatility
         generatedData = generateSynthetic(52, 365 * 24 * 3600 * 1000, 0.04);
+    }
+
+    // Safety check: ensure we have at least 2 points for a line
+    if (generatedData.length < 2) {
+        generatedData = [
+            { time: now - 3600000, price: currentPrice },
+            { time: now, price: currentPrice }
+        ];
     }
 
     const prices = generatedData.map(d => d.price);
@@ -89,15 +88,12 @@ const ChartSection: React.FC<ChartSectionProps> = ({ coin }) => {
   }, [coin.id, coin.sparkline_in_7d, coin.current_price, timeframe]);
 
   const isPositive = coin.price_change_percentage_24h >= 0;
-  // If timeframe is 1H, calculate change based on start/end of chart for better context, else use 24h stats
   const chartIsPositive = data.length > 0 ? data[data.length - 1].price >= data[0].price : isPositive;
   const chartColor = chartIsPositive ? '#0ecb81' : '#f6465d';
 
-  // Format X Axis based on Timeframe
   const formatXAxis = (tick: number) => {
     const date = new Date(tick);
-    if (timeframe === '1H') return date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-    if (timeframe === '24H') return date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+    if (timeframe === '1H' || timeframe === '24H') return date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
     if (timeframe === '7D') return date.toLocaleDateString([], {weekday: 'short'});
     if (timeframe === '30D') return date.toLocaleDateString([], {month: 'short', day: 'numeric'});
     if (timeframe === '1Y') return date.toLocaleDateString([], {month: 'short', year: '2-digit'});
@@ -107,7 +103,7 @@ const ChartSection: React.FC<ChartSectionProps> = ({ coin }) => {
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       return (
-        <div className="bg-white dark:bg-dark-surface border border-gray-200 dark:border-dark-border p-3 shadow-lg rounded-lg backdrop-blur-sm bg-opacity-90 dark:bg-opacity-90">
+        <div className="bg-white dark:bg-dark-surface border border-gray-200 dark:border-dark-border p-3 shadow-lg rounded-lg backdrop-blur-sm bg-opacity-90 dark:bg-opacity-90 z-50">
           <p className="text-gray-500 dark:text-gray-400 text-xs mb-1 font-mono">{new Date(label).toLocaleString()}</p>
           <div className="flex items-center gap-2">
              <div className={`w-2 h-2 rounded-full ${chartIsPositive ? 'bg-trade-up' : 'bg-trade-down'}`}></div>
@@ -122,8 +118,8 @@ const ChartSection: React.FC<ChartSectionProps> = ({ coin }) => {
   };
 
   return (
-    <Card className="h-[500px] flex flex-col relative overflow-hidden transition-all duration-300">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 relative z-10">
+    <Card className="flex flex-col relative overflow-hidden transition-all duration-300 min-h-[500px]">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4 relative z-10">
         <div className="flex items-center gap-4">
             <div className="p-2 bg-gray-50 dark:bg-white/5 rounded-xl border border-gray-100 dark:border-white/5 shadow-inner">
                 <img src={coin.image} alt={coin.name} className="w-10 h-10" loading="lazy" />
@@ -167,7 +163,8 @@ const ChartSection: React.FC<ChartSectionProps> = ({ coin }) => {
         </div>
       </div>
 
-      <div className="flex-1 w-full min-h-[300px] relative">
+      {/* FIXED HEIGHT CONTAINER for Recharts stability */}
+      <div className="w-full h-[360px] relative mt-2">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={data} margin={{ top: 10, right: 0, left: 0, bottom: 0 }}>
             <defs>
